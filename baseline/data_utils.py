@@ -192,21 +192,9 @@ class MovieDataset(BipartiteGraphDataset):
     def __init__(self, args):
         super(MovieDataset, self).__init__(args)
 
-        self.users = pd.read_csv('datasets/general/' + self.dataset + '/users.csv')
-        self.items = pd.read_csv('datasets/general/' + self.dataset + '/movies.csv')
-        self.ratings = pd.read_csv('datasets/general/' + self.dataset + '/ratings.csv')
-
-        self.items['Genres'] = self.items['Genres'].apply(lambda x: x.split('|'))
-        Genres = ["None", "Action", "Adventure", "Animation", "Children's",
-                  "Comedy", "Crime", "Documentary", "Drama", "Fantasy",
-                  "Film-Noir", "Horror", "Musical", "Mystery",
-                  "Romance", "Sci-Fi", "Thriller", "War", "Western"]
-        g2id = {g: i for i, g in enumerate(Genres)}
-        self.items['Genres'] = self.items['Genres'].apply(lambda x: [g2id[g] for g in x])
-
-        self.trainData = pd.read_csv('datasets/general/' + self.dataset + '/' + 'train.txt', sep='\t',
+        self.trainData = pd.read_csv('../datasets/general/' + self.dataset + '/' + 'ntrain.txt', sep='\t',
                                      names=['UserID', 'MovieID'])
-        self.testData = pd.read_csv('datasets/general/' + self.dataset + '/' + 'test.txt', sep='\t',
+        self.testData = pd.read_csv('../datasets/general/' + self.dataset + '/' + 'ntest.txt', sep='\t',
                                     names=['UserID', 'MovieID'])
         self.n_user = max(self.trainData['UserID'].max(), self.testData['UserID'].max()) + 1
         self.m_item = max(self.trainData['MovieID'].max(), self.testData['MovieID'].max()) + 1
@@ -217,11 +205,6 @@ class MovieDataset(BipartiteGraphDataset):
         self.allUPos = self.get_user_pos_items(list(range(self.n_user)))
         self.allIPos = self.get_item_pos_users(list(range(self.m_item)))
         self.testDict = self.__build_test()
-        self.Graph = None
-        self.u_sim_matrix, self.i_sim_matrix = None, None
-        self.get_sparse_graph(0.15, 0.1)
-        self.S, self.SS, self.uFeats, self.iFeats = None, None, None, None
-        self.all_sampling()
         self.uLabel, self.iLabel = None, None
         self.get_labels()
         self.U, self.I, self.tuLabel, self.tiLabel = self.trainData['UserID'].copy().to_numpy(), \
@@ -261,12 +244,6 @@ class MovieDataset(BipartiteGraphDataset):
         print('Computation \\Omega OK!')
         return res_mat.long(), res_sim_mat.float()
 
-    def all_sampling(self):
-        S = self.trainData[['UserID', 'MovieID']].to_numpy()
-        uFeats = self.users[['Gender', 'Age', 'Opt']].to_numpy()
-        iFeats = self.items['Genres'].to_numpy()
-        self.S, self.uFeats, self.iFeats = torch.LongTensor(S), torch.LongTensor(uFeats), iFeats
-
     def __build_test(self):
         tdu, tdi = {}, {}
         for idx, row in self.testData.iterrows():
@@ -282,11 +259,11 @@ class POIDataset(BipartiteGraphDataset):
     def __init__(self, args):
         super(POIDataset, self).__init__(args)
 
-        self.trainData = pd.read_csv('datasets/general/' + self.dataset + '/' + self.dataset + '_train.txt', sep='\t',
+        self.trainData = pd.read_csv('../datasets/general/' + self.dataset + '/' + self.dataset + '_train.txt', sep='\t',
                                      names=['UserID', 'ItemID', 'times'])
-        self.tuneData = pd.read_csv('datasets/general/' + self.dataset + '/' + self.dataset + '_tune.txt', sep='\t',
+        self.tuneData = pd.read_csv('../datasets/general/' + self.dataset + '/' + self.dataset + '_tune.txt', sep='\t',
                                      names=['UserID', 'ItemID', 'times'])
-        self.testData = pd.read_csv('datasets/general/' + self.dataset + '/' + 'LT_test.txt', sep='\t',
+        self.testData = pd.read_csv('../datasets/general/' + self.dataset + '/' + 'LT_test.txt', sep='\t',
                                      names=['UserID', 'ItemID', 'times'])
 
         self.n_user = max(self.trainData['UserID'].max(), self.tuneData['UserID'].max(), self.testData['UserID'].max()) + 1
@@ -299,20 +276,11 @@ class POIDataset(BipartiteGraphDataset):
         self.allUPos = self.get_user_pos_items(list(range(self.n_user)))
         self.allIPos = self.get_item_pos_users(list(range(self.m_item)))
         self.testDict = self.__build_test()
-        self.Graph = None
-        self.u_sim_matrix, self.i_sim_matrix = None, None
-        self.get_sparse_graph(0.06, 0.05)
-        self.S, self.SS = None, None
-        self.all_sampling()
         self.uLabel, self.iLabel = None, None
         self.get_labels()
         self.U, self.I, self.tuLabel, self.tiLabel = self.trainData['UserID'].copy().to_numpy(), \
                                                      self.trainData['ItemID'].copy().to_numpy(), None, None
         self.init_bathes()
-
-    def all_sampling(self):
-        S = self.trainData[['UserID', 'ItemID']].to_numpy()
-        self.S = torch.LongTensor(S)
 
     def __build_test(self):
         tdu, tdi = {}, {}
