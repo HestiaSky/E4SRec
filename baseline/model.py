@@ -14,8 +14,8 @@ class BasicModel(nn.Module):
         self.dim = args.dim
         self.user_embedding = nn.Embedding(self.n_user, self.dim)
         self.item_embedding = nn.Embedding(self.m_item, self.dim)
-        nn.init.xavier_normal_(self.user_embedding.weight)
-        nn.init.xavier_normal_(self.item_embedding.weight)
+        nn.init.normal_(self.user_embedding.weight, args.weight_decay)
+        nn.init.normal_(self.item_embedding.weight, args.weight_decay)
 
 
 class VanillaMF(BasicModel):

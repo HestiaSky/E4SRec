@@ -12,31 +12,24 @@ MODEL = {'VanillaMF': VanillaMF, 'LightGCN': LightGCN}
 
 
 def parse_args():
-    config_args = {
-        'lr': 0.001,
-        'dropout': 0.3,
-        'cuda': 0,
-        'epochs': 100,
-        'weight_decay': 1e-4,
-        'seed': 42,
-        'model': 'VanillaMF',
-        'dim': 128,
-        'layers': 2,
-        'dataset': 'ML1M',
-        'topk': [5, 10, 20],
-        'patience': 5,
-        'eval_freq': 5,
-        'lr_reduce_freq': 100,
-        'save_freq': 1,
-        'neg_num': 200,
-        'batch_size': 1024,
-        'gamma': 0.5,
-        'save': 0,
-    }
-
     parser = argparse.ArgumentParser()
-    for param, val in config_args.items():
-        parser.add_argument(f"--{param}", default=val)
+    parser.add_argument('seed', type=int, default=42)
+    parser.add_argument('model', type=str, default='VanillaMF')
+    parser.add_argument('dataset', type=str, default='ML1M')
+    parser.add_argument('lr', type=float, default=0.001)
+    parser.add_argument('batch_size', type=int, default=1024)
+    parser.add_argument('dropout', type=float, default=0.3)
+    parser.add_argument('cuda', type=int, default=0)
+    parser.add_argument('epochs', type=int, default=100)
+    parser.add_argument('weight_decay', type=float, default=1e-3)
+    parser.add_argument('dim', type=int, default=64)
+    parser.add_argument('neg_num', type=int, default=200)
+    parser.add_argument('topk', type=list, default=[5, 10, 20])
+    parser.add_argument('eval_freq', type=int, default=5)
+    parser.add_argument('lr_reduce_freq', type=int, default=100)
+    parser.add_argument('gamma', type=float, default=0.5)
+    parser.add_argument('save', type=int, default=0)
+
     args = parser.parse_args()
     return args
 
@@ -68,7 +61,7 @@ def train():
     avg_loss = 0.
 
     for i, batch in enumerate(data_loader):
-        users, pos_items = batch[0], batch[1]
+        users, pos_items = batch[:, 0], batch[:, 1]
         neg_items = dataset.negative_sampling(len(users), args.neg_num)
         users, pos_items, neg_items = users.to(args.device), pos_items.to(args.device), neg_items.to(args.device)
 
@@ -134,25 +127,28 @@ def test():
                   f'MRR@{k}: {results["MRR"][j]} \n '
                   f'MAP@{k}: {results["MAP"][j]} \n '
                   f'NDCG@{k}: {results["NDCG"][j]} \n')
+        return results["Recall"][-1]
 
 
 # Train Model
 t_total = time.time()
+best_recall = 0.
 for epoch in range(args.epochs):
     print(f'Epoch {epoch}')
     train()
     torch.cuda.empty_cache()
     if (epoch + 1) % args.eval_freq == 0:
-        test()
+        recall = test()
+        if recall > best_recall:
+            best_recall = recall
+            if args.save == 1:
+                state = {'model': model.state_dict(), 'optimizer': optimizer.state_dict()}
+                torch.save(state, '../datasets/general/' + args.dataset + '/' + args.model + '.pth')
+                pickle.dump(model.user_embedding.weight.detach(),
+                            open('../datasets/general/' + args.dataset + '/' + args.model + '_user_embed.pkl', 'wb'))
+                pickle.dump(model.item_embedding.weight.detach(),
+                            open('../datasets/general/' + args.dataset + '/' + args.model + '_item_embed.pkl', 'wb'))
         torch.cuda.empty_cache()
-if args.save == 1:
-    state = {'model': model.state_dict(), 'optimizer': optimizer.state_dict()}
-    torch.save(state, 'datasets/general/' + args.dataset + '/' + args.model + '.pth')
-    pickle.dump(model.user_embedding.weight.detach(),
-                open('datasets/general/' + args.dataset + '/' + args.model + '_user_embed.pkl', 'wb'))
-    pickle.dump(model.item_embedding.weight.detach(),
-                open('datasets/general/' + args.dataset + '/' + args.model + '_item_embed.pkl', 'wb'))
-    torch.cuda.empty_cache()
 
 print(f'Model training finished! Total time is {time.time()-t_total}')
 
