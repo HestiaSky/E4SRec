@@ -158,7 +158,6 @@ class SequentialDataset(Dataset):
                 user, items = int(line[0]) - 1, [int(item) for item in line[1:]]
                 self.allPos[user] = items
 
-
     def negative_sampling(self, left, right, ts):
         t = np.random.randint(left, right)
         while t in ts:
@@ -173,7 +172,7 @@ class SequentialDataset(Dataset):
 
     def test_seq_generate(self, idx, subset='test'):
         seqs = []
-        for i in range(len(idx)):
+        for i in idx:
             if len(self.valData[i]) < 1 or len(self.testData[i]) < 1:
                 continue
             seq = np.zeros([self.maxlen], dtype=np.int32)

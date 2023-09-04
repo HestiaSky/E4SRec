@@ -47,12 +47,18 @@ data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 model = MODEL[args.model](args, dataset)
 print(str(model))
 
-optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
+optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, betas=(0.9, 0.98))
 lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_reduce_freq, gamma=float(args.gamma))
 tot_params = sum([np.prod(p.size()) for p in model.parameters()])
 print(f'Total number of parameters: {tot_params}')
 if args.cuda is not None and int(args.cuda) >= 0:
     model = model.to(args.device)
+
+for name, param in model.named_parameters():
+    try:
+        torch.nn.init.xavier_normal_(param.data)
+    except:
+        pass
 
 
 def train():
@@ -91,6 +97,7 @@ def test():
             batch_users = users[i*args.batch_size: (i+1)*args.batch_size] \
                 if (i+1)*args.batch_size <= len(users) else users[i*args.batch_size:]
             selected_items = dataset.get_user_pos_items(batch_users)
+
             groundTruth = [[len(selected_items[0]) - 1]] * len(selected_items)
             batch_users = dataset.test_seq_generate(batch_users, 'test')
             batch_users = torch.LongTensor(batch_users).to(args.device)

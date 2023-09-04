@@ -122,7 +122,7 @@ class SASRec(nn.Module):
         self.pos_embedding = nn.Embedding(args.maxlen, self.dim)
         self.emb_dropout = nn.Dropout(p=self.dropout)
 
-        self.attention_layernorms = nn.ModuleList()  # to be Q for self-attention
+        self.attention_layernorms = nn.ModuleList()
         self.attention_layers = nn.ModuleList()
         self.forward_layernorms = nn.ModuleList()
         self.forward_layers = nn.ModuleList()
@@ -186,9 +186,9 @@ class SASRec(nn.Module):
 
     def forward(self, seq):
         log_feats = self.log2feats(seq)
-        final_feat = log_feats[:, -1, :]
+        log_feats = log_feats[:, -1, :]
         items_emb = self.embedding.weight
-        ratings = self.act(torch.matmul(final_feat, items_emb.t()))
+        ratings = self.act(torch.matmul(log_feats, items_emb.t()))
 
         return ratings
 
