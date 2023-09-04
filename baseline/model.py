@@ -121,8 +121,6 @@ class SASRec(nn.Module):
         self.embedding = nn.Embedding(self.m_item, self.dim)
         self.pos_embedding = nn.Embedding(args.maxlen, self.dim)
         self.emb_dropout = nn.Dropout(p=self.dropout)
-        nn.init.normal_(self.embedding.weight, std=args.weight_decay)
-        nn.init.normal_(self.pos_embedding.weight, std=args.weight_decay)
 
         self.attention_layernorms = nn.ModuleList()  # to be Q for self-attention
         self.attention_layers = nn.ModuleList()
@@ -157,7 +155,7 @@ class SASRec(nn.Module):
         seqs += self.pos_embedding(torch.LongTensor(positions).to(self.device))
         seqs = self.emb_dropout(seqs)
 
-        timeline_mask = torch.BoolTensor(log_seq == 0).to(self.device)
+        timeline_mask = torch.BoolTensor(log_seq.cpu() == 0).to(self.device)
         seqs *= ~timeline_mask.unsqueeze(-1)
         tl = seqs.shape[1]
         attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.device))

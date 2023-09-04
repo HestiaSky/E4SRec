@@ -62,8 +62,8 @@ def train():
 
     for i, batch in enumerate(data_loader):
         seq, pos, neg = batch
-        seq, pos, neg = seq.to(args.device), pos.to(args.device), neg.to(args.device)
         indices = np.where(pos != 0)
+        seq, pos, neg = seq.to(args.device), pos.to(args.device), neg.to(args.device)
         pos_labels, neg_labels = torch.ones(pos.shape).to(args.device), torch.zeros(neg.shape).to(args.device)
 
         optimizer.zero_grad()
@@ -84,10 +84,7 @@ def test():
     with torch.no_grad():
         users = np.arange(dataset.n_user)
 
-        results = {'Precision': np.zeros(len(args.topk)),
-                   'Recall': np.zeros(len(args.topk)),
-                   'MRR': np.zeros(len(args.topk)),
-                   'MAP': np.zeros(len(args.topk)),
+        results = {'Recall': np.zeros(len(args.topk)),
                    'NDCG': np.zeros(len(args.topk))}
         batch_num = len(users) // args.batch_size + 1
         for i in range(batch_num):
@@ -105,24 +102,16 @@ def test():
 
             r = getLabel(groundTruth, ratings_K)
             for j, k in enumerate(args.topk):
-                pre, rec = RecallPrecision_atK(groundTruth, r, k)
-                mrr = MRR_atK(groundTruth, r, k)
-                map = MAP_atK(groundTruth, r, k)
+                _, rec = RecallPrecision_atK(groundTruth, r, k)
                 ndcg = NDCG_atK(groundTruth, r, k)
-                results['Precision'][j] += pre
                 results['Recall'][j] += rec
-                results['MRR'][j] += mrr
-                results['MAP'][j] += map
                 results['NDCG'][j] += ndcg
 
         for key in results.keys():
             results[key] /= float(len(users))
         print(f'Evaluation for User: \n')
         for j, k in enumerate(args.topk):
-            print(f'Precision@{k}: {results["Precision"][j]} \n '
-                  f'Recall@{k}: {results["Recall"][j]} \n '
-                  f'MRR@{k}: {results["MRR"][j]} \n '
-                  f'MAP@{k}: {results["MAP"][j]} \n '
+            print(f'Recall@{k}: {results["Recall"][j]} \n '
                   f'NDCG@{k}: {results["NDCG"][j]} \n')
         return results["Recall"][-1]
 
