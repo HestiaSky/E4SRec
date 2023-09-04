@@ -15,16 +15,14 @@ class BipartiteGraphDataset(Dataset):
         self.neg_num = args.neg_num
 
         self.trainData, self.testData = [], []
-        self.UserItemNet = None
-        self.allUPos, self.allIPos = None, None
+        self.allUPos = []
         self.users, self.pos_items, self.neg_items = None, None, None
-        self.uLabel, self.iLabel = None, None
-        self.U, self.I, self.tuLabel, self.tiLabel = None, None, None, None
 
         with open('../datasets/general/' + self.dataset + '/train.txt', 'r') as f:
             for line in f:
                 line = line.strip().split(' ')
                 user, items = int(line[0]), [int(item) for item in line[1:]]
+                self.allUPos.append(items)
                 for item in items:
                     self.trainData.append([user, item])
 
@@ -40,15 +38,10 @@ class BipartiteGraphDataset(Dataset):
         self.n_user = max(self.trainData[:, 0].max(), self.testData[:, 0].max()) + 1
         self.m_item = max(self.trainData[:, 1].max(), self.testData[:, 1].max()) + 1
 
-        self.UserItemNet = csr_matrix(
-            (np.ones(self.trainDataSize), (self.trainData[:, 0], self.trainData[:, 1])),
-            shape=(self.n_user, self.m_item))
-        self.allUPos = self.get_user_pos_items(list(range(self.n_user)))
-        self.allIPos = self.get_item_pos_users(list(range(self.m_item)))
         self.testDict = self.__build_test()
-        self.uLabel, self.iLabel = None, None
+        self.uLabel = None
         self.get_labels()
-        self.U, self.I, self.tuLabel, self.tiLabel = self.trainData[:, 0], self.trainData[:, 1], None, None
+        self.U, self.I, self.tuLabel = self.trainData[:, 0], self.trainData[:, 1], None
 
     def negative_sampling(self, batch_size, neg_num):
         neg_items = np.random.randint(0, self.m_item, (batch_size, neg_num))
@@ -56,39 +49,25 @@ class BipartiteGraphDataset(Dataset):
         return neg_items
 
     def get_labels(self):
-        u_label, i_label = [], []
-        allUPos, allIPos = self.allUPos, self.allIPos
+        u_label = []
+        allUPos = self.allUPos
         for user in range(self.n_user):
             user_pos = allUPos[user]
             user_label = torch.zeros(self.m_item, dtype=torch.float)
             user_label[user_pos] = 1.
             user_label = 0.9 * user_label + (1.0 / self.m_item)
             u_label.append(user_label.tolist())
-        for item in range(self.m_item):
-            item_pos = allIPos[item]
-            item_label = torch.zeros(self.n_user, dtype=torch.float)
-            item_label[item_pos] = 1.
-            item_label = 0.9 * item_label + (1.0 / self.n_user)
-            i_label.append(item_label.tolist())
-        self.uLabel, self.iLabel = torch.FloatTensor(u_label), torch.FloatTensor(i_label)
+        self.uLabel = torch.FloatTensor(u_label)
 
     def init_bathes(self):
         np.random.shuffle(self.U)
-        np.random.shuffle(self.I)
         self.tuLabel = self.uLabel[self.U]
-        self.tiLabel = self.iLabel[self.I]
 
     def get_user_pos_items(self, users):
         posItems = []
         for user in users:
-            posItems.append(self.UserItemNet[user].nonzero()[1])
+            posItems.append(self.allUPos[user])
         return posItems
-
-    def get_item_pos_users(self, items):
-        posUsers = []
-        for item in items:
-            posUsers.append(self.UserItemNet.T[item].nonzero()[1])
-        return posUsers
 
     def __convert_sp_mat_to_sp_tensor(self, X):
         coo = X.tocoo().astype(np.float64)
@@ -143,5 +122,94 @@ class BipartiteGraphDataset(Dataset):
 
     def __len__(self):
         return self.trainDataSize
+
+
+class SequentialDataset(Dataset):
+    def __init__(self, args):
+        super(SequentialDataset, self).__init__()
+        self.device = args.device
+        self.dataset = args.dataset
+        self.maxlen = args.maxlen
+
+        self.trainData, self.valData, self.testData = [], [], []
+        self.n_user, self.m_item = 0, 0
+
+        with open('../datasets/sequential/' + self.dataset + '/' + self.dataset + '.txt', 'r') as f:
+            for line in f:
+                line = line.strip().split(' ')
+                user, items = int(line[0]) - 1, [int(item) for item in line[1:]]
+                self.n_user = max(self.n_user, user)
+                self.m_item = max(self.m_item, max(items))
+                if len(items) >= 3:
+                    self.trainData.append(items[:-2])
+                    self.valData.append([items[-2]])
+                    self.testData.append([items[-1]])
+                else:
+                    self.trainData.append(items)
+                    self.valData.append([])
+                    self.testData.append([])
+
+        self.n_user, self.m_item = self.n_user + 1, self.m_item + 1
+
+        self.allPos = {}
+        with open('../datasets/sequential/' + self.dataset + '/' + self.dataset + '_sample.txt', 'r') as f:
+            for line in f:
+                line = line.strip().split(' ')
+                user, items = int(line[0]) - 1, [int(item) for item in line[1:]]
+                self.allPos[user] = items
+
+
+    def negative_sampling(self, left, right, ts):
+        t = np.random.randint(left, right)
+        while t in ts:
+            t = np.random.randint(left, right)
+        return t
+
+    def get_user_pos_items(self, users):
+        posItems = []
+        for user in users:
+            posItems.append(self.allPos[user] + self.testData[user])
+        return posItems
+
+    def test_seq_generate(self, idx, subset='test'):
+        seqs = []
+        for i in range(len(idx)):
+            if len(self.valData[i]) < 1 or len(self.testData[i]) < 1:
+                continue
+            seq = np.zeros([self.maxlen], dtype=np.int32)
+            tmp = self.maxlen - 1
+            if subset == 'test':
+                seq[tmp] = self.valData[i][0]
+                tmp -= 1
+            for t in reversed(self.trainData[i][:-1]):
+                seq[tmp] = t
+                tmp -= 1
+                if tmp == -1:
+                    break
+            seqs.append(seq)
+        seqs = np.array(seqs)
+        return seqs
+
+    def __getitem__(self, idx):
+        seq, pos, neg = (np.zeros([self.maxlen], dtype=np.int32),
+                         np.zeros([self.maxlen], dtype=np.int32),
+                         np.zeros([self.maxlen], dtype=np.int32))
+        nxt = self.trainData[idx][-1]
+        tmp = self.maxlen - 1
+        ts = set(self.trainData[idx])
+        for t in reversed(self.trainData[idx][:-1]):
+            seq[tmp] = t
+            pos[tmp] = nxt
+            if nxt != 0:
+                neg[tmp] = self.negative_sampling(1, self.m_item, ts)
+            nxt = t
+            tmp -= 1
+            if tmp == -1:
+                break
+        return seq, pos, neg
+
+    def __len__(self):
+        return len(self.trainData)
+
 
 
