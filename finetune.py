@@ -4,10 +4,14 @@ from typing import List
 
 import fire
 import torch
+import pickle
+import numpy as np
 import transformers
-from datasets import load_dataset
 from transformers import LlamaForCausalLM, LlamaTokenizer
 from utils.prompter import Prompter
+from model import LLM4Rec
+from data_utils import BipartiteGraphDataset, BipartiteGraphCollator, SequentialDataset, SequentialCollator
+from baseline.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel
 
 from peft import (
     LoraConfig,
@@ -22,6 +26,7 @@ def train(
     base_model: str = "", 
     data_path: str = "",
     output_dir: str = "",
+    task_type: str = "",
     # training hyperparams
     batch_size: int = 128,
     micro_batch_size: int = 8,
@@ -55,6 +60,7 @@ def train(
             f"base_model: {base_model}\n"
             f"data_path: {data_path}\n"
             f"output_dir: {output_dir}\n"
+            f"task_type: {task_type}\n"
             f"batch_size: {batch_size}\n"
             f"micro_batch_size: {micro_batch_size}\n"
             f"num_epochs: {num_epochs}\n"
@@ -103,120 +109,43 @@ def train(
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
 
-    model = LlamaForCausalLM.from_pretrained(
-        base_model,
-        load_in_8bit=True,
-        torch_dtype=torch.float16,
-        device_map=device_map)
-
-    tokenizer = LlamaTokenizer.from_pretrained(base_model)
-    
-    bos = tokenizer.bos_token_id
-    eos = tokenizer.eos_token_id
-    pad = tokenizer.pad_token_id
-    print("pre-trained model's BOS EOS and PAD token id:",bos,eos,pad," => It should be 1 2 None")
-
-    tokenizer.pad_token_id = 0  # unk. we want this to be different from the eos token
-    tokenizer.padding_side = "right"
-
-    def tokenize(prompt, add_eos_token=True):
-        result = tokenizer(
-            prompt,
-            truncation=True,
-            max_length=cutoff_len,
-            padding=False,
-            return_tensors=None,
+    if task_type == 'general':
+        dataset = BipartiteGraphDataset(data_path)
+        user_embed, item_embed = (pickle.load(open('datasets/general/' + data_path + '/VanillaMF_user_embed.pkl', 'rb')),
+                                  pickle.load(open('datasets/general/' + data_path + '/VanillaMF_item_embed.pkl', 'rb')))
+        model = LLM4Rec(
+            base_model=base_model,
+            input_dim=64,
+            output_dim=dataset.m_item,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=lora_target_modules,
+            device_map=device_map,
+            instruction_text=prompter.generate_prompt(task_type),
+            user_embeds=user_embed,
+            input_embeds=item_embed,
         )
-        if (
-            result["input_ids"][-1] != tokenizer.eos_token_id
-            and len(result["input_ids"]) < cutoff_len
-            and add_eos_token
-        ):
-            result["input_ids"].append(tokenizer.eos_token_id)
-            result["attention_mask"].append(1)
-
-        result["labels"] = result["input_ids"].copy()
-
-        return result
-
-    def generate_and_tokenize_prompt(data_point):
-        full_prompt = prompter.generate_prompt(
-            data_point["instruction"],
-            data_point["input"],
-            data_point["output"])
-        
-        tokenized_full_prompt = tokenize(full_prompt)
-        if not train_on_inputs:
-            user_prompt = prompter.generate_prompt(
-                data_point["instruction"], data_point["input"])
-            
-            tokenized_user_prompt = tokenize(
-                user_prompt, add_eos_token=add_eos_token)
-            
-            user_prompt_len = len(tokenized_user_prompt["input_ids"])
-
-            if add_eos_token:
-                user_prompt_len -= 1
-
-            tokenized_full_prompt["labels"] = [
-                -100
-            ] * user_prompt_len + tokenized_full_prompt["labels"][
-                user_prompt_len:
-            ]  # TODO: Speed up?
-        return tokenized_full_prompt
-
-    model = prepare_model_for_int8_training(model)
-
-    config = LoraConfig(
-        r=lora_r,
-        lora_alpha=lora_alpha,
-        target_modules=lora_target_modules,
-        lora_dropout=lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM")
-
-    model = get_peft_model(model, config)
-
-    if data_path.endswith(".json") or data_path.endswith(".jsonl"):
-        data = load_dataset("json", data_files=data_path)
-    else:
-        data = load_dataset(data_path)
-
-    if resume_from_checkpoint:
-        # Check the available weights and load them
-        checkpoint_name = os.path.join(
-            resume_from_checkpoint, "pytorch_model.bin"
-        )  # Full checkpoint
-        if not os.path.exists(checkpoint_name):
-            checkpoint_name = os.path.join(
-                resume_from_checkpoint, "adapter_model.bin"
-            )  # only LoRA model - LoRA config above has to fit
-            resume_from_checkpoint = (
-                False  # So the trainer won't try loading its state
-            )
-        # The two files above have a different name depending on how they were saved, but are actually the same.
-        if os.path.exists(checkpoint_name):
-            print(f"Restarting from {checkpoint_name}")
-            adapters_weights = torch.load(checkpoint_name)
-            set_peft_model_state_dict(model, adapters_weights)
-        else:
-            print(f"Checkpoint {checkpoint_name} not found")
-
-    model.print_trainable_parameters()
-
-    if val_set_size > 0:
-        train_val = data["train"].train_test_split(
-            test_size=val_set_size, shuffle=True, seed=42
+        data_collator = BipartiteGraphCollator()
+    elif task_type == 'sequential':
+        dataset = SequentialDataset(data_path, 50)
+        input_embed = pickle.load(open('datasets/sequential/' + data_path + '/SASRec_item_embed.pkl', 'rb'))
+        model = LLM4Rec(
+            base_model=base_model,
+            input_dim=64,
+            output_dim=dataset.m_item,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=lora_target_modules,
+            device_map=device_map,
+            instruction_text=prompter.generate_prompt(task_type),
+            user_embeds=torch.rand(1, 1),
+            input_embeds=input_embed,
         )
-        train_data = (
-            train_val["train"].shuffle().map(generate_and_tokenize_prompt)
-        )
-        val_data = (
-            train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-        )
-    else:
-        train_data = data["train"].shuffle().map(generate_and_tokenize_prompt)
-        val_data = None
+        data_collator = SequentialCollator()
+
+    model.base_model.print_trainable_parameters()
 
     if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
@@ -225,8 +154,8 @@ def train(
 
     trainer = transformers.Trainer(
         model=model,
-        train_dataset=train_data,
-        eval_dataset=val_data,
+        train_dataset=dataset,
+        eval_dataset=None,
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
@@ -250,22 +179,66 @@ def train(
             report_to="wandb" if use_wandb else None,
             run_name=wandb_run_name if use_wandb else None,
         ),
-        data_collator=transformers.DataCollatorForSeq2Seq(
-            tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-        ),
+        data_collator=data_collator,
     )
-    model.config.use_cache = False
 
     if torch.__version__ >= "2" and sys.platform != "win32":
         model = torch.compile(model)
 
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
-    model.save_pretrained(output_dir)
-    # model.base_model.save_pretrained(output_dir)
-    pytorch_model_path = os.path.join(output_dir, "pytorch_model.bin")
-    torch.save({}, pytorch_model_path)
-    tokenizer.save_pretrained(output_dir)
+    model.eval()
+    topk = [5, 10, 20]
+    testData = dataset.testData
+    users = np.arange(dataset.n_user)
+
+    results = {'Precision': np.zeros(len(topk)),
+               'Recall': np.zeros(len(topk)),
+               'MRR': np.zeros(len(topk)),
+               'MAP': np.zeros(len(topk)),
+               'NDCG': np.zeros(len(topk))}
+    for u in users:
+        all_pos = dataset.allPos[u]
+        groundTruth = [testData[u]]
+        inputs = torch.LongTensor(testData[u]).cuda().unsqueeze(0)
+        ratings = model.predict(inputs)
+
+        exclude_index = []
+        exclude_items = []
+        for range_i, its in enumerate(all_pos):
+            exclude_index.extend([range_i] * len(its))
+            exclude_items.extend(its)
+        ratings[exclude_index, exclude_items] = -(1 << 10)
+        _, ratings_K = torch.topk(ratings, k=topk[-1])
+        ratings_K = ratings_K.cpu().numpy()
+
+        r = getLabel(groundTruth, ratings_K)
+        for j, k in enumerate(topk):
+            pre, rec = RecallPrecision_atK(groundTruth, r, k)
+            mrr = MRR_atK(groundTruth, r, k)
+            map = MAP_atK(groundTruth, r, k)
+            ndcg = NDCG_atK(groundTruth, r, k)
+            results['Precision'][j] += pre
+            results['Recall'][j] += rec
+            results['MRR'][j] += mrr
+            results['MAP'][j] += map
+            results['NDCG'][j] += ndcg
+
+    for key in results.keys():
+        results[key] /= float(len(users))
+    print(f'Evaluation for User: \n')
+    for j, k in enumerate(topk):
+        print(f'Precision@{k}: {results["Precision"][j]} \n '
+              f'Recall@{k}: {results["Recall"][j]} \n '
+              f'MRR@{k}: {results["MRR"][j]} \n '
+              f'MAP@{k}: {results["MAP"][j]} \n '
+              f'NDCG@{k}: {results["NDCG"][j]} \n')
+
+    lora_weights = model.llama_model.get_peft_model_state_dict()
+    user_proj, input_proj, score = model.user_proj.state_dict(), model.input_proj.state_dict(), model.score.state_dict()
+    model_path = os.path.join(output_dir, "adapter.pth")
+    torch.save({'lora_weights': lora_weights,
+                'user_proj': user_proj, 'input_proj': input_proj, 'score': score}, model_path)
 
 
 if __name__ == "__main__":

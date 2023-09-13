@@ -1,11 +1,12 @@
 torchrun --nproc_per_node=2 --master_port=1234 finetune.py \
-    --base_model meta-llama/Llama-2-13b-hf \
-    --data-path garage-bAInd/Open-Platypus \
-    --output_dir ./llama2-platypus-13b \
+    --base_model garage-bAInd/Platypus2-70B-instruct \
+    --data_path ML1M \
+    --task_type general \
+    --output_dir ./LLM4Rec \
     --batch_size 16 \
     --micro_batch_size 1 \
     --num_epochs 1 \
-    --learning_rate 0.0004 \
+    --learning_rate 0.0003 \
     --cutoff_len 4096 \
     --val_set_size 0 \
     --lora_r 16 \

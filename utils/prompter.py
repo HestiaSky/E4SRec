@@ -4,7 +4,7 @@ A dedicated helper to manage templates and prompt building.
 
 import json
 import os.path as osp
-from typing import Union
+from typing import Union, List
 
 
 class Prompter(object):
@@ -27,25 +27,21 @@ class Prompter(object):
 
     def generate_prompt(
         self,
-        instruction: str,
-        input: Union[None, str] = None,
-        label: Union[None, str] = None,
-    ) -> str:
+        task_type: str,
+    ) -> List[str]:
         # returns the full prompt from instruction and optional input
         # if a label (=response, =output) is provided, it's also appended.
-        if input:
-            res = self.template["prompt_input"].format(
-                instruction=instruction, input=input
-            )
+        if task_type == 'general':
+            instruction = "Given the user ID and purchase history, predict the most suitable item for the user."
+        elif task_type == 'sequential':
+            instruction = "Given the user’s purchase history, predict next possible item to be purchased."
         else:
-            res = self.template["prompt_no_input"].format(
-                instruction=instruction
-            )
-        if label:
-            res = f"{res}{label}"
+            instruction = ""
+        ins = self.template["prompt_no_input"].format(
+            instruction=instruction
+        )
+        res = self.template["response_split"]
         if self._verbose:
-            print(res)
-        return res
+            print(ins + res)
+        return [ins, res]
 
-    def get_response(self, output: str) -> str:
-        return output.split(self.template["response_split"])[1].strip()
