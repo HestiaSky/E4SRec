@@ -40,12 +40,11 @@ class LLM4Rec(nn.Module):
         self.llama_tokenizer.pad_token = 0
         self.llama_tokenizer.padding_side = "right"
         self.instruct_ids, self.instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
-                                                                     truncation=True, padding=False, add_special_tokens=False)
+                                                                     truncation=True, padding=False,
+                                                                     return_tensors='pt', add_special_tokens=False)
         self.response_ids, self.response_mask = self.llama_tokenizer(self.args['instruction_text'][1],
-                                                                     truncation=True, padding=False, add_special_tokens=False)
-        (self.instruct_ids, self.instruct_mask,
-         self.response_ids, self.response_mask) = (self.instruct_ids.cuda(), self.instruct_mask.cuda(),
-                                                   self.response_ids.cuda(), self.response_mask.cuda())
+                                                                     truncation=True, padding=False,
+                                                                     return_tensors='pt', add_special_tokens=False)
         print('Language decoder initialized.')
 
         self.user_embeds = nn.Embedding.from_pretrained(self.args['user_embeds'], freeze=True)
@@ -53,51 +52,37 @@ class LLM4Rec(nn.Module):
         self.input_embeds = nn.Embedding.from_pretrained(self.args['input_embeds'], freeze=True)
         self.input_proj = nn.Linear(self.input_dim, self.llama_model.config.hidden_size)
         self.score = nn.Linear(self.llama_model.config.hidden_size, self.output_dim, bias=False)
-        self.post_init()
 
-    def predict(self, inputs):
-        instruct_embeds = self.llama_model.model.model.embed_tokens(self.instruct_ids)
-        response_embeds = self.llama_model.model.model.embed_tokens(self.response_ids)
+    def predict(self, inputs, inputs_mask):
+        bs = inputs.shape[0]
+        instruct_embeds = self.llama_model.model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+        response_embeds = self.llama_model.model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
+        response_mask = self.response_mask.cuda().expand(bs, -1)
 
-        if self.user_embeds.shape[0] > 1:
+        if self.user_embeds.weight.shape[0] > 1:
             users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
             items = self.input_proj(self.input_embeds(inputs[:, 1:]))
             inputs = torch.cat([users, items], dim=1)
         else:
             inputs = self.input_proj(self.input_embeds(inputs))
         inputs = torch.cat([instruct_embeds, inputs, response_embeds], dim=1)
-        attention_mask = torch.cat([self.instruct_mask, torch.ones(inputs.shape[1]).cuda(), self.response_mask], dim=1)
+        attention_mask = torch.cat([instruct_mask, inputs_mask, response_mask], dim=1)
         assert attention_mask.size()[0] == inputs.size()[0] and attention_mask.size()[1] == inputs.size()[1]
 
-        outputs = self.llama_model(input_embeds=inputs, attention_mask=attention_mask, return_dict=True)
+        outputs = self.llama_model(inputs_embeds=inputs, attention_mask=attention_mask, return_dict=True)
         pooled_output = outputs.hidden_states[:, -1]
         pooled_logits = self.score(pooled_output)
 
-        return pooled_logits.view(-1, self.output_dim)
+        return outputs, pooled_logits.view(-1, self.output_dim)
 
     def forward(self, inputs, inputs_mask, labels):
-        bs = inputs.shape[0]
-        instruct_embeds = self.llama_model.model.model.embed_tokens(self.instruct_ids).expand(bs, -1, -1)
-        response_embeds = self.llama_model.model.model.embed_tokens(self.response_ids).expand(bs, -1, -1)
-
-        if self.user_embeds.shape[0] > 1:
-            users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
-            items = self.input_proj(self.input_embeds(inputs[:, 1:]))
-            inputs = torch.cat([users, items], dim=1)
-        else:
-            inputs = self.input_proj(self.input_embeds(inputs))
-        inputs = torch.cat([instruct_embeds, inputs, response_embeds], dim=1)
-        attention_mask = torch.cat([self.instruct_mask, inputs_mask, self.response_mask], dim=1)
-        assert attention_mask.size()[0] == inputs.size()[0] and attention_mask.size()[1] == inputs.size()[1]
-
-        outputs = self.llama_model(input_embeds=inputs, attention_mask=attention_mask, return_dict=True)
-        pooled_output = outputs.hidden_states[:, -1]
-        pooled_logits = self.score(pooled_output)
+        outputs, pooled_logits = self.predict(inputs, inputs_mask)
 
         loss = None
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(pooled_logits.view(-1, self.output_dim), labels.view(-1))
+            loss = loss_fct(pooled_logits, labels.view(-1))
 
         return SequenceClassifierOutputWithPast(
             loss=loss,

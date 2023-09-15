@@ -2,10 +2,8 @@ import pandas as pd
 import numpy as np
 import torch
 import time
+from dataclasses import dataclass
 from torch.utils.data import Dataset, DataLoader
-from transformers import DataCollator
-from scipy.sparse import csr_matrix
-import scipy.sparse as sp
 
 
 class BipartiteGraphDataset(Dataset):
@@ -61,12 +59,15 @@ class BipartiteGraphDataset(Dataset):
         return len(self.trainData)
 
 
-class BipartiteGraphCollator(DataCollator):
+@dataclass
+class BipartiteGraphCollator:
     def __call__(self, batch) -> dict:
         user, items, labels = zip(*batch)
+        bs = len(user)
         max_len = max([len(item) for item in items])
-        inputs = [[user] + [0] * (max_len - len(item)) + item for item in items]
-        inputs_mask = [[1] + [0] * (max_len - len(item)) + [1] * len(item) for item in items]
+        inputs = [[user[i]] + items[i] + [0] * (max_len - len(items[i])) for i in range(bs)]
+        inputs_mask = [[1] + [1] * len(items[i]) + [0] * (max_len - len(items[i])) for i in range(bs)]
+        labels = [[label] for label in labels]
         inputs, inputs_mask, labels = torch.LongTensor(inputs), torch.LongTensor(inputs_mask), torch.LongTensor(labels)
 
         return {
@@ -82,7 +83,7 @@ class SequentialDataset(Dataset):
         self.dataset = dataset
         self.maxlen = maxlen
 
-        self.trainData, self.valData, self.testData = [], [], []
+        self.trainData, self.valData, self.testData = [], {}, {}
         self.n_user, self.m_item = 0, 0
 
         with open('datasets/sequential/' + self.dataset + '/' + self.dataset + '.txt', 'r') as f:
@@ -96,13 +97,13 @@ class SequentialDataset(Dataset):
                     length = min(len(train_items), self.maxlen)
                     for t in range(length):
                         self.trainData.append([train_items[:-length + t], train_items[-length + t]])
-                    self.valData.append([items[:-2], items[-2]])
-                    self.testData.append([items[:-1], items[-1]])
+                    self.valData[user] = [items[:-2], items[-2]]
+                    self.testData[user] = [items[:-1], items[-1]]
                 else:
                     for t in range(len(items)):
                         self.trainData.append([items[:-len(items) + t], items[-len(items) + t]])
-                    self.valData.append([])
-                    self.testData.append([])
+                    self.valData[user] = []
+                    self.testData[user] = []
 
         self.n_user, self.m_item = self.n_user + 1, self.m_item + 1
 
@@ -126,13 +127,14 @@ class SequentialDataset(Dataset):
     def __len__(self):
         return len(self.trainData)
 
-
-class SequentialCollator(DataCollator):
+@dataclass
+class SequentialCollator:
     def __call__(self, batch) -> dict:
         seqs, labels = zip(*batch)
         max_len = max(max([len(seq) for seq in seqs]), 2)
         inputs = [[0] * (max_len - len(seq)) + seq for seq in seqs]
         inputs_mask = [[0] * (max_len - len(seq)) + [1] * len(seq) for seq in seqs]
+        labels = [[label] for label in labels]
         inputs, inputs_mask, labels = torch.LongTensor(inputs), torch.LongTensor(inputs_mask), torch.LongTensor(labels)
 
         return {

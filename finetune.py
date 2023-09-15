@@ -10,15 +10,8 @@ import transformers
 from transformers import LlamaForCausalLM, LlamaTokenizer
 from utils.prompter import Prompter
 from model import LLM4Rec
-from data_utils import BipartiteGraphDataset, BipartiteGraphCollator, SequentialDataset, SequentialCollator
-from baseline.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel
-
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    prepare_model_for_int8_training,
-    set_peft_model_state_dict
-)
+from utils.data_utils import BipartiteGraphDataset, BipartiteGraphCollator, SequentialDataset, SequentialCollator
+from utils.eval_utils import RecallPrecision_atK, MRR_atK, MAP_atK, NDCG_atK, AUC, getLabel
 
 
 def train(
@@ -113,6 +106,7 @@ def train(
         dataset = BipartiteGraphDataset(data_path)
         user_embed, item_embed = (pickle.load(open('datasets/general/' + data_path + '/VanillaMF_user_embed.pkl', 'rb')),
                                   pickle.load(open('datasets/general/' + data_path + '/VanillaMF_item_embed.pkl', 'rb')))
+        item_embed = torch.cat([item_embed.mean(dim=0).unsqueeze(0), item_embed], dim=0)
         model = LLM4Rec(
             base_model=base_model,
             input_dim=64,
@@ -145,8 +139,6 @@ def train(
         )
         data_collator = SequentialCollator()
 
-    model.base_model.print_trainable_parameters()
-
     if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
         model.is_parallelizable = True
@@ -174,7 +166,7 @@ def train(
             output_dir=output_dir,
             save_total_limit=2,
             load_best_model_at_end=True if val_set_size > 0 else False,
-            ddp_find_unused_parameters=False if ddp else None,
+            ddp_find_unused_parameters=True,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else None,
             run_name=wandb_run_name if use_wandb else None,
@@ -189,26 +181,38 @@ def train(
 
     model.eval()
     topk = [5, 10, 20]
-    testData = dataset.testData
-    users = np.arange(dataset.n_user)
-
     results = {'Precision': np.zeros(len(topk)),
                'Recall': np.zeros(len(topk)),
                'MRR': np.zeros(len(topk)),
                'MAP': np.zeros(len(topk)),
                'NDCG': np.zeros(len(topk))}
-    for u in users:
-        all_pos = dataset.allPos[u]
-        groundTruth = [testData[u]]
-        inputs = torch.LongTensor(testData[u]).cuda().unsqueeze(0)
-        ratings = model.predict(inputs)
 
-        exclude_index = []
-        exclude_items = []
-        for range_i, its in enumerate(all_pos):
-            exclude_index.extend([range_i] * len(its))
-            exclude_items.extend(its)
-        ratings[exclude_index, exclude_items] = -(1 << 10)
+    testData = dataset.testData
+    users = np.arange(dataset.n_user)
+    for u in users:
+        if task_type == 'general':
+            all_pos = [dataset.allPos[u]]
+            groundTruth = [testData[u]]
+            inputs = torch.LongTensor([u] + all_pos[0]).cuda().unsqueeze(0)
+            inputs_mask = torch.ones(inputs.shape).cuda()
+            _, ratings = model.predict(inputs, inputs_mask)
+            exclude_index = []
+            exclude_items = []
+            for range_i, its in enumerate(all_pos):
+                exclude_index.extend([range_i] * len(its))
+                exclude_items.extend(its)
+            ratings[exclude_index, exclude_items] = -(1 << 10)
+
+        elif task_type == 'sequential':
+            if len(testData[u]) == 0:
+                continue
+            selected_items = [[testData[u][1]] + dataset.allPos[u]]
+            groundTruth = [[0]]
+            inputs = torch.LongTensor(testData[u][0]).cuda().unsqueeze(0)
+            inputs_mask = torch.ones(inputs.shape).cuda()
+            _, ratings = model.predict(inputs, inputs_mask)
+            ratings = ratings[[[[k] * len(selected_items[0]) for k in range(len(ratings))], selected_items]]
+
         _, ratings_K = torch.topk(ratings, k=topk[-1])
         ratings_K = ratings_K.cpu().numpy()
 

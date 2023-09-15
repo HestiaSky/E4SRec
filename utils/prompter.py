@@ -37,7 +37,7 @@ class Prompter(object):
             instruction = "Given the user’s purchase history, predict next possible item to be purchased."
         else:
             instruction = ""
-        ins = self.template["prompt_no_input"].format(
+        ins = self.template["prompt_input"].format(
             instruction=instruction
         )
         res = self.template["response_split"]
