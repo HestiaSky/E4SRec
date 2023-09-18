@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import transformers
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import LlamaModel, LlamaForCausalLM, LlamaTokenizer
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 
 from peft import (
@@ -30,21 +30,23 @@ class LLM4Rec(nn.Module):
             bias='none',
         )
 
-        self.llama_model = LlamaForCausalLM.from_pretrained(self.args['base_model'], load_in_8bit=True,
-                                                            torch_dtype=torch.float16, device_map=self.args['device_map'])
+        self.llama_model = LlamaModel.from_pretrained(self.args['base_model'], load_in_8bit=True,
+                                                            local_files_only=True, torch_dtype=torch.float16,
+                                                            device_map=self.args['device_map'])
         self.llama_model = prepare_model_for_int8_training(self.llama_model)
         self.llama_model = get_peft_model(self.llama_model, peft_config)
         self.llama_model.print_trainable_parameters()
+        self.llama_model.config.use_cache = False
 
-        self.llama_tokenizer = LlamaTokenizer.from_pretrained(self.args['base_model'], use_fast=False)
+        self.llama_tokenizer = LlamaTokenizer.from_pretrained(self.args['base_model'], use_fast=False, local_files_only=True)
         self.llama_tokenizer.pad_token = 0
         self.llama_tokenizer.padding_side = "right"
         self.instruct_ids, self.instruct_mask = self.llama_tokenizer(self.args['instruction_text'][0],
                                                                      truncation=True, padding=False,
-                                                                     return_tensors='pt', add_special_tokens=False)
+                                                                     return_tensors='pt', add_special_tokens=False).values()
         self.response_ids, self.response_mask = self.llama_tokenizer(self.args['instruction_text'][1],
                                                                      truncation=True, padding=False,
-                                                                     return_tensors='pt', add_special_tokens=False)
+                                                                     return_tensors='pt', add_special_tokens=False).values()
         print('Language decoder initialized.')
 
         self.user_embeds = nn.Embedding.from_pretrained(self.args['user_embeds'], freeze=True)
@@ -55,8 +57,8 @@ class LLM4Rec(nn.Module):
 
     def predict(self, inputs, inputs_mask):
         bs = inputs.shape[0]
-        instruct_embeds = self.llama_model.model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
-        response_embeds = self.llama_model.model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
+        instruct_embeds = self.llama_model.model.embed_tokens(self.instruct_ids.cuda()).expand(bs, -1, -1)
+        response_embeds = self.llama_model.model.embed_tokens(self.response_ids.cuda()).expand(bs, -1, -1)
         instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
         response_mask = self.response_mask.cuda().expand(bs, -1)
 
@@ -71,7 +73,7 @@ class LLM4Rec(nn.Module):
         assert attention_mask.size()[0] == inputs.size()[0] and attention_mask.size()[1] == inputs.size()[1]
 
         outputs = self.llama_model(inputs_embeds=inputs, attention_mask=attention_mask, return_dict=True)
-        pooled_output = outputs.hidden_states[:, -1]
+        pooled_output = outputs.last_hidden_state[:, -1]
         pooled_logits = self.score(pooled_output)
 
         return outputs, pooled_logits.view(-1, self.output_dim)
