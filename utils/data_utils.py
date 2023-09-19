@@ -13,7 +13,7 @@ class BipartiteGraphDataset(Dataset):
 
         self.trainData, self.allPos, self.testData = [], {}, {}
         self.n_user, self.m_item = 0, 0
-        with open('datasets/general/' + self.dataset + '/train.txt', 'r') as f:
+        with open(self.dataset + 'train.txt', 'r') as f:
             for line in f:
                 line = line.strip().split(' ')
                 user, items = int(line[0]), [int(item) + 1 for item in line[1:]]
@@ -23,7 +23,7 @@ class BipartiteGraphDataset(Dataset):
                 self.n_user = max(self.n_user, user)
                 self.m_item = max(self.m_item, max(items))
 
-        with open('datasets/general/' + self.dataset + '/test.txt', 'r') as f:
+        with open(self.dataset + 'test.txt', 'r') as f:
             for line in f:
                 line = line.strip().split(' ')
                 user, items = int(line[0]), [int(item) + 1 for item in line[1:]]
@@ -32,24 +32,6 @@ class BipartiteGraphDataset(Dataset):
                 self.m_item = max(self.m_item, max(items))
 
         self.n_user, self.m_item = self.n_user + 1, self.m_item + 1
-        # self.uLabel = None
-        # self.get_labels()
-        # self.U, self.tuLabel = list(self.allPos.keys()), None
-
-    # def get_labels(self):
-    #     u_label = []
-    #     allUPos = self.allPos
-    #     for user in range(self.n_user):
-    #         user_pos = allUPos[user]
-    #         user_label = torch.zeros(self.m_item, dtype=torch.float)
-    #         user_label[user_pos] = 1.
-    #         # user_label = 0.9 * user_label + (1.0 / self.m_item)
-    #         u_label.append(user_label.tolist())
-    #     self.uLabel = torch.FloatTensor(u_label)
-    #
-    # def init_bathes(self):
-    #     np.random.shuffle(self.U)
-    #     self.tuLabel = self.uLabel[self.U]
 
     def __getitem__(self, idx):
         user, item = self.trainData[idx]
@@ -86,7 +68,7 @@ class SequentialDataset(Dataset):
         self.trainData, self.valData, self.testData = [], {}, {}
         self.n_user, self.m_item = 0, 0
 
-        with open('datasets/sequential/' + self.dataset + '/' + self.dataset + '.txt', 'r') as f:
+        with open(self.dataset + 'data.txt', 'r') as f:
             for line in f:
                 line = line.strip().split(' ')
                 user, items = int(line[0]) - 1, [int(item) for item in line[1:]]
@@ -108,7 +90,7 @@ class SequentialDataset(Dataset):
         self.n_user, self.m_item = self.n_user + 1, self.m_item + 1
 
         self.allPos = {}
-        with open('datasets/sequential/' + self.dataset + '/' + self.dataset + '_sample.txt', 'r') as f:
+        with open(self.dataset + 'test_sample.txt', 'r') as f:
             for line in f:
                 line = line.strip().split(' ')
                 user, items = int(line[0]) - 1, [int(item) for item in line[1:]]

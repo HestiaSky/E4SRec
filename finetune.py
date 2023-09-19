@@ -18,6 +18,7 @@ def train(
     # model/data params
     base_model: str = "", 
     data_path: str = "",
+    cache_dir: str = "",
     output_dir: str = "",
     task_type: str = "",
     # training hyperparams
@@ -52,6 +53,7 @@ def train(
             f"Params using prompt template {prompt_template_name}:\n"
             f"base_model: {base_model}\n"
             f"data_path: {data_path}\n"
+            f"cache_dir: {cache_dir}\n"
             f"output_dir: {output_dir}\n"
             f"task_type: {task_type}\n"
             f"batch_size: {batch_size}\n"
@@ -107,37 +109,27 @@ def train(
         user_embed, item_embed = (pickle.load(open('datasets/general/' + data_path + '/VanillaMF_user_embed.pkl', 'rb')),
                                   pickle.load(open('datasets/general/' + data_path + '/VanillaMF_item_embed.pkl', 'rb')))
         item_embed = torch.cat([item_embed.mean(dim=0).unsqueeze(0), item_embed], dim=0)
-        model = LLM4Rec(
-            base_model=base_model,
-            input_dim=64,
-            output_dim=dataset.m_item,
-            lora_r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            lora_target_modules=lora_target_modules,
-            device_map=device_map,
-            instruction_text=prompter.generate_prompt(task_type),
-            user_embeds=user_embed,
-            input_embeds=item_embed,
-        )
         data_collator = BipartiteGraphCollator()
     elif task_type == 'sequential':
         dataset = SequentialDataset(data_path, 50)
-        input_embed = pickle.load(open('datasets/sequential/' + data_path + '/SASRec_item_embed.pkl', 'rb'))
-        model = LLM4Rec(
-            base_model=base_model,
-            input_dim=64,
-            output_dim=dataset.m_item,
-            lora_r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            lora_target_modules=lora_target_modules,
-            device_map=device_map,
-            instruction_text=prompter.generate_prompt(task_type),
-            user_embeds=torch.rand(1, 1),
-            input_embeds=input_embed,
-        )
+        user_embed, item_embed = None, pickle.load(open('datasets/sequential/' + data_path + '/SASRec_item_embed.pkl', 'rb'))
         data_collator = SequentialCollator()
+
+    model = LLM4Rec(
+        base_model=base_model,
+        task_type=task_type,
+        cache_dir=cache_dir,
+        input_dim=64,
+        output_dim=dataset.m_item,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        lora_target_modules=lora_target_modules,
+        device_map=device_map,
+        instruction_text=prompter.generate_prompt(task_type),
+        user_embeds=user_embed,
+        input_embeds=item_embed,
+    )
 
     if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available

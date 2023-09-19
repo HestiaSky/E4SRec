@@ -22,7 +22,7 @@ class LLM4Rec(nn.Module):
         print(f'Initializing language decoder ...')
         # add the lora module
         peft_config = LoraConfig(
-            task_type='CAUSAL_LM',
+            task_type='FEATURE_EXTRACTION',
             r=self.args['lora_r'],
             lora_alpha=self.args['lora_alpha'],
             lora_dropout=self.args['lora_dropout'],
@@ -30,9 +30,9 @@ class LLM4Rec(nn.Module):
             bias='none',
         )
 
-        self.llama_model = LlamaModel.from_pretrained(self.args['base_model'], load_in_8bit=True,
-                                                            local_files_only=True, torch_dtype=torch.float16,
-                                                            device_map=self.args['device_map'])
+        self.llama_model = LlamaModel.from_pretrained(self.args['base_model'], load_in_8bit=True, torch_dtype=torch.float16,
+                                                      local_files_only=True, cache_dir=args['cache_dir'],
+                                                      device_map=self.args['device_map'])
         self.llama_model = prepare_model_for_int8_training(self.llama_model)
         self.llama_model = get_peft_model(self.llama_model, peft_config)
         self.llama_model.print_trainable_parameters()
@@ -49,8 +49,10 @@ class LLM4Rec(nn.Module):
                                                                      return_tensors='pt', add_special_tokens=False).values()
         print('Language decoder initialized.')
 
-        self.user_embeds = nn.Embedding.from_pretrained(self.args['user_embeds'], freeze=True)
-        self.user_proj = nn.Linear(self.input_dim, self.llama_model.config.hidden_size)
+        self.task_type = args['task_type']
+        if self.task_type == 'general':
+            self.user_embeds = nn.Embedding.from_pretrained(self.args['user_embeds'], freeze=True)
+            self.user_proj = nn.Linear(self.input_dim, self.llama_model.config.hidden_size)
         self.input_embeds = nn.Embedding.from_pretrained(self.args['input_embeds'], freeze=True)
         self.input_proj = nn.Linear(self.input_dim, self.llama_model.config.hidden_size)
         self.score = nn.Linear(self.llama_model.config.hidden_size, self.output_dim, bias=False)
@@ -62,7 +64,7 @@ class LLM4Rec(nn.Module):
         instruct_mask = self.instruct_mask.cuda().expand(bs, -1)
         response_mask = self.response_mask.cuda().expand(bs, -1)
 
-        if self.user_embeds.weight.shape[0] > 1:
+        if self.task_type == 'general':
             users = self.user_proj(self.user_embeds(inputs[:, 0].unsqueeze(1)))
             items = self.input_proj(self.input_embeds(inputs[:, 1:]))
             inputs = torch.cat([users, items], dim=1)
