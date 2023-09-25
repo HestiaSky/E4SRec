@@ -108,14 +108,17 @@ def train(
 
     if task_type == 'general':
         dataset = BipartiteGraphDataset(data_path)
-        user_embed, item_embed = (pickle.load(open('datasets/general/' + data_path + '/VanillaMF_user_embed.pkl', 'rb')),
-                                  pickle.load(open('datasets/general/' + data_path + '/VanillaMF_item_embed.pkl', 'rb')))
+        user_embed, item_embed = (pickle.load(open(data_path + 'VanillaMF_user_embed.pkl', 'rb')).cuda(),
+                                  pickle.load(open(data_path + 'VanillaMF_item_embed.pkl', 'rb')).cuda())
         item_embed = torch.cat([item_embed.mean(dim=0).unsqueeze(0), item_embed], dim=0)
         data_collator = BipartiteGraphCollator()
     elif task_type == 'sequential':
         dataset = SequentialDataset(data_path, 50)
-        user_embed, item_embed = None, pickle.load(open('datasets/sequential/' + data_path + '/SASRec_item_embed.pkl', 'rb'))
+        user_embed, item_embed = None, pickle.load(open(data_path + 'SASRec_item_embed.pkl', 'rb')).cuda()
         data_collator = SequentialCollator()
+    
+    state_dict = torch.load(checkpoint_dir + 'pytorch_model.bin', map_location='cpu')
+    state_dict = {k: v.cuda() for k, v in state_dict.items() if 'lora' in k or 'user_proj' in k or 'input_proj' in k or 'score' in k}
 
     model = LLM4Rec(
         base_model=base_model,
@@ -132,12 +135,46 @@ def train(
         user_embeds=user_embed,
         input_embeds=item_embed,
     )
-    model.from_pretrained(checkpoint_dir + 'pytorch_model.bin')
+    model.load_state_dict(state_dict, strict=False)
+    del state_dict
 
     if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
         model.is_parallelizable = True
         model.model_parallel = True
+
+    trainer = transformers.Trainer(
+        model=model,
+        train_dataset=dataset,
+        eval_dataset=None,
+        args=transformers.TrainingArguments(
+            per_device_train_batch_size=micro_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            warmup_steps=warmup_steps,
+            num_train_epochs=num_epochs,
+            learning_rate=learning_rate,
+            # dataloader_num_workers=16,
+            fp16=True,
+            logging_steps=1,
+            optim="adamw_torch",
+            evaluation_strategy="steps" if val_set_size > 0 else "no",
+            save_strategy="steps",
+            eval_steps=200 if val_set_size > 0 else None,
+            save_steps=1000,
+            lr_scheduler_type=lr_scheduler,
+            output_dir=output_dir,
+            save_total_limit=2,
+            load_best_model_at_end=True if val_set_size > 0 else False,
+            ddp_find_unused_parameters=False if ddp else None,
+            group_by_length=group_by_length,
+            report_to="none",
+            run_name=None,
+        ),
+        data_collator=data_collator,
+    )
+
+    # if torch.__version__ >= "2" and sys.platform != "win32":
+    #     model = torch.compile(model)
 
     model.eval()
     topk = [1, 5, 10, 20, 100]
