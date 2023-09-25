@@ -160,8 +160,8 @@ def train(
             load_best_model_at_end=True if val_set_size > 0 else False,
             ddp_find_unused_parameters=False if ddp else None,
             group_by_length=group_by_length,
-            report_to="wandb" if use_wandb else None,
-            run_name=wandb_run_name if use_wandb else None,
+            report_to="none",
+            run_name=None,
         ),
         data_collator=data_collator,
     )
@@ -230,11 +230,14 @@ def train(
               f'MAP@{k}: {results["MAP"][j]} \n '
               f'NDCG@{k}: {results["NDCG"][j]} \n')
 
-    lora_weights = model.llama_model.get_peft_model_state_dict()
-    user_proj, input_proj, score = model.user_proj.state_dict(), model.input_proj.state_dict(), model.score.state_dict()
+    model.llama_model.save_pretrained(output_dir)
     model_path = os.path.join(output_dir, "adapter.pth")
-    torch.save({'lora_weights': lora_weights,
-                'user_proj': user_proj, 'input_proj': input_proj, 'score': score}, model_path)
+    if task_type == 'general':
+        user_proj, input_proj, score = model.user_proj.state_dict(), model.input_proj.state_dict(), model.score.state_dict()
+        torch.save({'user_proj': user_proj, 'input_proj': input_proj, 'score': score}, model_path)
+    elif task_type == 'sequential':
+        input_proj, score = model.input_proj.state_dict(), model.score.state_dict()
+        torch.save({'input_proj': input_proj, 'score': score}, model_path)
 
 
 if __name__ == "__main__":
