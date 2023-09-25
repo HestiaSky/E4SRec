@@ -106,13 +106,13 @@ def train(
 
     if task_type == 'general':
         dataset = BipartiteGraphDataset(data_path)
-        user_embed, item_embed = (pickle.load(open('datasets/general/' + data_path + '/VanillaMF_user_embed.pkl', 'rb')),
-                                  pickle.load(open('datasets/general/' + data_path + '/VanillaMF_item_embed.pkl', 'rb')))
+        user_embed, item_embed = (pickle.load(open(data_path + 'VanillaMF_user_embed.pkl', 'rb')),
+                                  pickle.load(open(data_path + 'VanillaMF_item_embed.pkl', 'rb')))
         item_embed = torch.cat([item_embed.mean(dim=0).unsqueeze(0), item_embed], dim=0)
         data_collator = BipartiteGraphCollator()
     elif task_type == 'sequential':
         dataset = SequentialDataset(data_path, 50)
-        user_embed, item_embed = None, pickle.load(open('datasets/sequential/' + data_path + '/SASRec_item_embed.pkl', 'rb'))
+        user_embed, item_embed = None, pickle.load(open(data_path + 'SASRec_item_embed.pkl', 'rb'))
         data_collator = SequentialCollator()
 
     model = LLM4Rec(
@@ -172,7 +172,7 @@ def train(
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     model.eval()
-    topk = [5, 10, 20]
+    topk = [1, 5, 10, 20, 100]
     results = {'Precision': np.zeros(len(topk)),
                'Recall': np.zeros(len(topk)),
                'MRR': np.zeros(len(topk)),

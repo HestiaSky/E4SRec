@@ -140,7 +140,7 @@ def train(
         model.model_parallel = True
 
     model.eval()
-    topk = [5, 10, 20]
+    topk = [1, 5, 10, 20, 100]
     results = {'Precision': np.zeros(len(topk)),
                'Recall': np.zeros(len(topk)),
                'MRR': np.zeros(len(topk)),
