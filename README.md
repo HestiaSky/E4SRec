@@ -1,5 +1,3 @@
-# E4SRec
-
 ### Environment
 
 At least 2 * A800 is required. Preferable 8 * A800.
